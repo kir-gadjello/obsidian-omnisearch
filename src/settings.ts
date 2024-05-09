@@ -39,6 +39,10 @@ export interface OmnisearchSettings extends WeightingSettings {
   PDFIndexing: boolean
   /** Enable Images indexing */
   imagesIndexing: boolean
+
+  /** Enable Images indexing */
+  customImageIndexCmd: string
+
   /** Enable Office documents indexing */
   officeIndexing: boolean
 
@@ -119,7 +123,7 @@ export class SettingsTab extends PluginSettingTab {
         👍 You have installed <a href="https://github.com/scambier/obsidian-text-extractor">Text Extractor</a>, Omnisearch can use it to index PDFs and images contents.
             <br />Text extraction only works on desktop, but the cache can be synchronized with your mobile device.`
       } else {
-        span.innerHTML += `⚠️ Omnisearch requires <a href="https://github.com/scambier/obsidian-text-extractor">Text Extractor</a> to index PDFs and images.`
+        span.innerHTML += `⚠️ Omnisearch requires either <a href="https://github.com/scambier/obsidian-text-extractor">Text Extractor</a> or a custom shell command to index PDFs and images.`
       }
     })
 
@@ -146,14 +150,16 @@ export class SettingsTab extends PluginSettingTab {
         })
       )
       .setDisabled(!getTextExtractor())
-
+    
+    const canIndexImages = getTextExtractor() || settings.customImageIndexCmd.length;
+    
     // Images Indexing
     const indexImagesDesc = new DocumentFragment()
     indexImagesDesc.createSpan({}, span => {
-      span.innerHTML = `Omnisearch will use Text Extractor to OCR your images and index their content`
+      span.innerHTML = `Omnisearch will use Text Extractor or a custom shell command to OCR your images and index their content`
     })
     new Setting(containerEl)
-      .setName(`Images OCR indexing ${getTextExtractor() ? '' : '⚠️ Disabled'}`)
+      .setName(`Images OCR indexing ${canIndexImages ? '' : '⚠️ Disabled'}`)
       .setDesc(indexImagesDesc)
       .addToggle(toggle =>
         toggle.setValue(settings.imagesIndexing).onChange(async v => {
@@ -162,7 +168,23 @@ export class SettingsTab extends PluginSettingTab {
           await saveSettings(this.plugin)
         })
       )
-      .setDisabled(!getTextExtractor())
+      .setDisabled(!canIndexImages)
+
+    // Images Indexing
+    const indexCustomImagesDesc = new DocumentFragment()
+    indexCustomImagesDesc.createSpan({}, span => {
+      span.innerHTML = `Omnisearch will use this shell command to OCR your images and extract their text content`
+    })
+    new Setting(containerEl)
+      .setName(`Images OCR indexing: custom shell command`)
+      .setDesc(indexCustomImagesDesc)
+      .addText(textInput =>
+        textInput.setValue(settings.customImageIndexCmd).onChange(async v => {
+          await database.clearCache()
+          settings.customImageIndexCmd = v
+          await saveSettings(this.plugin)
+        })
+      )
 
     // Office Documents Indexing
     const indexOfficesDesc = new DocumentFragment()
@@ -659,6 +681,7 @@ export const DEFAULT_SETTINGS: OmnisearchSettings = {
   downrankedFoldersFilters: [] as string[],
   ignoreDiacritics: true,
   indexedFileTypes: [] as string[],
+  customImageIndexCmd: '',
   PDFIndexing: false,
   officeIndexing: false,
   imagesIndexing: false,

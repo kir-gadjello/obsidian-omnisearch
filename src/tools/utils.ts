@@ -138,7 +138,7 @@ export function getCtrlKeyLabel(): 'ctrl' | '⌘' {
 export function isContentIndexable(path: string): boolean {
   const hasTextExtractor = !!getTextExtractor()
   const canIndexPDF = hasTextExtractor && settings.PDFIndexing
-  const canIndexImages = hasTextExtractor && settings.imagesIndexing
+  const canIndexImages = hasTextExtractor && settings.imagesIndexing || !!settings.customImageIndexCmd
   return (
     isFilePlaintext(path) ||
     isFileCanvas(path) ||

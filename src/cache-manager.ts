@@ -1,4 +1,4 @@
-import { Notice, TFile } from 'obsidian'
+import { Notice, TFile, Vault, FileSystemAdapter } from 'obsidian'
 import {
   type DocumentRef,
   getTextExtractor,
@@ -25,6 +25,36 @@ import type { CanvasData } from 'obsidian/canvas'
 import type { AsPlainObject } from 'minisearch'
 import type MiniSearch from 'minisearch'
 import { settings } from './settings'
+
+class Semaphore {
+  private count = 0;
+  private queue: (() => void)[] = [];
+
+  constructor(private limit: number) { }
+
+  acquire(): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.count < this.limit) {
+        this.count++;
+        resolve();
+      } else {
+        this.queue.push(resolve);
+      }
+    });
+  }
+
+  release(): void {
+    if (this.queue.length > 0) {
+      const fn = this.queue.shift();
+      fn && fn();
+    } else {
+      this.count--;
+    }
+  }
+}
+
+const MAX_CONCURRENT_SHELL_CMDS = 1; // adjust this value as needed
+const ocrSemaphore = new Semaphore(MAX_CONCURRENT_SHELL_CMDS);
 
 /**
  * This function is responsible for extracting the text from a file and
@@ -92,12 +122,56 @@ async function getAndMapIndexedDocument(
 
   // ** Image **
   else if (
-    isFileImage(path) &&
-    settings.imagesIndexing &&
-    extractor?.canFileBeExtracted(path)
+    isFileImage(path)
   ) {
-    content = await extractor.extractText(file)
+
+    // textextractor plugin
+    if (settings.imagesIndexing && extractor?.canFileBeExtracted(path)) {
+      content = await extractor.extractText(file)
+    }
+
+    // custom cmd
+    if (settings.customImageIndexCmd.length && app.vault.adapter instanceof FileSystemAdapter) {
+      const childProcess = require('child_process');
+
+      const abspath = app.vault.adapter.getFullPath(file.path);
+
+      if (abspath) {
+        let cmd = settings.customImageIndexCmd + " " + "'" + abspath + "'";
+
+        if (settings.customImageIndexCmd.indexOf("{}") > -1) {
+          cmd = settings.customImageIndexCmd.replace("{}", abspath);
+        }
+
+        await ocrSemaphore.acquire(); // wait for a slot to become available
+
+        try {
+          const stdout = await new Promise((resolve, reject) => {
+            const child = childProcess.exec(cmd, {
+              shell: process.env.SHELL, env: {
+                PS1: '1', // Set PS1 to a non-empty value to enable reading of configuration files
+              }
+            }, (error: any, stdout: any, stderr: any) => {
+              if (error) {
+                reject(error);
+              } else {
+                resolve(stdout);
+              }
+            });
+          });
+
+          console.log("OCR: ", cmd, "\n", stdout);
+
+          if (typeof stdout === 'string') {
+            content = stdout.toString();
+          }
+        } finally {
+          ocrSemaphore.release(); // release the slot
+        }
+      }
+    }
   }
+
   // ** PDF **
   else if (
     isFilePDF(path) &&
